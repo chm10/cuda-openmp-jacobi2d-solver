@@ -4,7 +4,7 @@ Este documento explica de forma detalhada as três abordagens implementadas no p
 
 ## Ambiente de Desenvolvimento (Local)
 
-Você pode rodar as versões **Serial**, **OpenMP** e cuda localmente e em HPC, desde que tenha spack instaldo para manter os pacotes compatíveis.
+Você pode rodar as versões **Serial**, **OpenMP** e **CUDA** localmente e em HPC, desde que tenha Spack instalado para manter os pacotes compatíveis.
 
 ## Compatibilidade com projeto anterior
 
@@ -51,16 +51,16 @@ Para manter o código organizado e facilitar a manutenção, o projeto segue a s
 │   ├── jacobi_omp.cpp      # Versões OpenMP (basic + tiled)
 │   ├── jacobi_cuda.cu      # Versões CUDA (naive + shared memory)
 │   └── validation.cpp      # Validação de resultados (erro absoluto/relativo)
-├── doc/                  # Documentação adicional (relatório, figuras)
-│   └── main.pdf          # Relatório completo do projeto
+├── doc/                    # Documentação adicional (relatório, figuras)
+│   └── main.pdf            # Relatório completo do projeto
 ├── scripts/                # Scripts de automação
 │   ├── run_experiments.sh  # Script para varredura de parâmetros (N, threads)
 │   └── plot_results.py     # Geração de gráficos a partir dos resultados
 ├── build/                  # Diretório de compilação (gerado pelo CMake)
 │   └── bin/
-│       └── jacobi_benchmark  # Executavel final
+│       └── jacobi_benchmark  # Executável final
 ├── README.md               # Este arquivo
-└── log_raw.txt            # Resultados dos experimentos (gerado por run_experiments.sh)
+└── log_raw.txt             # Resultados dos experimentos (gerado por run_experiments.sh)
 ```
 
 ## Dependências
@@ -75,7 +75,7 @@ Para manter o código organizado e facilitar a manutenção, o projeto segue a s
 Para rodar este projeto no Windows, é necessário configurar o WSL2:
 
 1. **Habilitar Modo de Desenvolvedor para gerar relatório Nvidia Nsight**:
-   - Abra *Configurações Painel de Controle Nvidia* →  *Para desenvolvedores* →  *Habilite os contadores*
+   - Abra *Configurações Painel de Controle Nvidia* → *Para desenvolvedores* → *Habilite os contadores*
 
 2. **Instalar WSL2**:
    ```powershell
@@ -85,7 +85,7 @@ Para rodar este projeto no Windows, é necessário configurar o WSL2:
    ```
 
 3. **Instalar CUDA no WSL2**:
-    Tente usar o Spack para evitar conflito de módulos e pacotes.
+   Tente usar o Spack para evitar conflito de módulos e pacotes.
 
 4. **Verificar acesso à GPU**:
    ```bash
@@ -93,14 +93,9 @@ Para rodar este projeto no Windows, é necessário configurar o WSL2:
    nvcc --version
    ```
 
-### Dependências
-
-- **CMake** ≥ 3.18
-- **CUDA Toolkit** ≥ 11.x (com suporte a compute capability 7.0+)
-- **GCC** ou **Clang** com suporte a C++17
-- **OpenMP** (incluído no GCC/Clang)
-- **Nsight Systems** (`nsys`) — para profiling de sistema. Instalei usando o .msi do windows
-- **Nsight Compute** (`ncu`) — para profiling de kernels. Instalei usando o .msi do windows
+### Ferramentas de Profiling
+- **Nsight Systems** (`nsys`) — para profiling de sistema (via CUDA Toolkit ou instalador `.msi` no Windows)
+- **Nsight Compute** (`ncu`) — para profiling de kernels (via CUDA Toolkit ou instalador `.msi` no Windows)
 
 ## Build
 
@@ -156,17 +151,17 @@ A compilação manual permite ajustar a arquitetura da GPU e flags de otimizaç�
 
 Volte para a raiz do projeto.
 ```bash
-# Exemplo para GPU com compute capability 8.0 (Ampere)
-nvcc -O3 -arch=sm_80 -Isrc -Iinclude \
+# Exemplo para GPU RTX 3090 com compute capability 8.6 (Ampere)
+nvcc -O3 -arch=sm_86 -Isrc -Iinclude \
     src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cpp src/jacobi_seq.cpp src/validation.cpp \
     -o jacobi_benchmark \
-    -Xcompiler "-fopenmp -O3 -march=native"
+    -Xcompiler "-fopenmp -O2"
 
 # Executar
 ./jacobi_benchmark 4096 1000
 ```
 
-> **Dica**: Use `nvidia-smi` para verificar a GPU e [CUDA GPUs](https://developer.nvidia.com/cuda-gpus) para encontrar o compute capability correto. As flags de otimização `-O3 -march=native` (CPU) e `-O3 --use_fast_math` (GPU) fizeram grande diferença nos resultados.
+> **Dica**: Use `nvidia-smi` para verificar a GPU e [CUDA GPUs](https://developer.nvidia.com/cuda-gpus) para encontrar o compute capability correto.
 
 ## Execução
 
@@ -179,11 +174,14 @@ nvcc -O3 -arch=sm_80 -Isrc -Iinclude \
 ### Executar com parâmetros customizados
 
 ```bash
+# N=4096, 500 iterações (configuração do relatório)
+OMP_NUM_THREADS=8 ./build/bin/jacobi_benchmark 4096 500
+
 # N=2048, 500 iterações
 ./build/bin/jacobi_benchmark 2048 500
 
-# N=8192, 2000 iterações
-./build/bin/jacobi_benchmark 8192 2000
+# N=8192, 500 iterações
+./build/bin/jacobi_benchmark 8192 500
 ```
 
 ### Executar varredura de experimentos
@@ -194,25 +192,25 @@ chmod +x scripts/run_experiments.sh
 ./scripts/run_experiments.sh
 ```
 
-O script gera `results.csv` com todos os resultados.
+O script gera `log_raw.txt` e `results.csv` com todos os resultados.
 
 ## Saída do Benchmark
 
 A saída padrão mostra uma tabela comparativa:
 
-```
+```text
 ========================================================================================
- Jacobi 2D Benchmark (N=4096, iterations=1000)
+ Jacobi 2D Benchmark (N=4096, iterations=500)
 ========================================================================================
-[CPU Seq]        Time:  3390.19 ms
-[OpenMP Basic]   Time:  3858.67 ms | Speedup: 0.87859x | Max Abs Err: 0 | Max Rel Err: 0
-[OpenMP Tiled]   Time:  4876.08 ms | Speedup: 0.69527x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Naive  8x 8] Time:  203.612 ms | Speedup: 16.6503x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Naive 16x16] Time:  179.405 ms | Speedup: 18.8968x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Naive 32x 8] Time:   177.33 ms | Speedup: 19.118x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Naive 32x16] Time:  177.667 ms | Speedup: 19.0817x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Naive 32x32] Time:  214.957 ms | Speedup: 15.7715x | Max Abs Err: 0 | Max Rel Err: 0
-[CUDA Shared 32x8] Time:  193.763 ms | Speedup: 17.4966x | Max Abs Err: 0 | Max Rel Err: 0
+[CPU Seq]          Time:  1876.18 ms
+[OpenMP Basic]     Time:  1501.96 ms | Speedup: 1.24915x | Max Abs Err: 0 | Max Rel Err: 0
+[OpenMP Tiled]     Time:  1852.27 ms | Speedup: 1.01291x | Max Abs Err: 0 | Max Rel Err: 0
+[CUDA Naive  8x 8] Time:   108.45 ms | Speedup:   17.3x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
+[CUDA Naive 16x16] Time:  92.6081 ms | Speedup: 20.2593x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
+[CUDA Naive 32x 8] Time:  92.1541 ms | Speedup: 20.3591x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
+[CUDA Naive 32x16] Time:  93.7396 ms | Speedup: 20.0148x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
+[CUDA Naive 32x32] Time:   111.62 ms | Speedup: 16.8086x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
+[CUDA Shared 32x8] Time:  105.524 ms | Speedup: 17.7797x | Max Abs Err: 2.40741e-35 | Max Rel Err: 2.40741e-26
 ========================================================================================
 ```
 
@@ -229,17 +227,17 @@ A saída padrão mostra uma tabela comparativa:
 
 ### 1. CPU Sequencial (Baseline)
 - Loop simples com ping-pong buffering (duas matrizes alternadas)
-- Complexidade: O(N² × iterations)
-- Serve como referência para calcular speedups
+- Complexidade: $\mathcal{O}(N^2 \times \text{iterations})$
+- Serve como referência para calcular speedups e corretude numérica
 
 ### 2. OpenMP Basic
-- `#pragma omp for` distribui linhas entre threads
+- `#pragma omp for schedule(static)` distribui linhas entre threads
 - `#pragma omp simd` instrui vetorização do loop interno
 - Troca de ponteiros em região `#pragma omp single`
 
 ### 3. OpenMP Tiled
-- Malha particionada em blocos (tiles) para melhorar cache locality
-- Cada thread processa um bloco completo antes de trocar ponteiros
+- Malha particionada em blocos (tiles) para melhorar localidade espacial nas caches L1/L2
+- Cada thread processa um bloco completo antes da barreira da iteração
 - Tile size padrão: 32×32
 
 ### 4. CUDA Naive
@@ -247,18 +245,18 @@ A saída padrão mostra uma tabela comparativa:
 - Testa 5 geometrias de bloco: 8×8, 16×16, 32×8, 32×16, 32×32
 - Ping-pong buffering no dispositivo
 
-### 5. CUDA Shared Memory (Otimizado)
-- Tiles compartilhados com padding anti-bank-conflict ([10][35] ao invés de [10][34])
-- Carregamento colaborativo contíguo sem divergência de warp
+### 5. CUDA Shared Memory
+- Tiles compartilhados de 34×10 com padding de 1 coluna (`[10][35]` ao invés de `[10][34]`)
+- Carregamento colaborativo contíguo do bloco e halo (conforme analisado no relatório, esse mapeamento linear ainda gera *bank conflicts* na escrita e overhead de `__syncthreads()`)
 - Configuração fixa: bloco 32×8, tile 34×10
 
 ## Validação
 
-Todos os resultados são validados contra a versão sequencial:
+Todos os resultados são validados ponto a ponto contra a versão sequencial:
 - **Erro absoluto máximo**: `max(|ref[i] - test[i]|)`
-- **Erro relativo máximo**: `max(|ref[i] - test[i]| / (|ref[i]| + ε))` com ε = 1e-9
+- **Erro relativo máximo**: `max(|ref[i] - test[i]| / (|ref[i]| + ε))` com `ε = 1e-9`
 
-Erros na casa de 1e-5 a 1e-8 são esperados devido à precisão finita do float e ordem de operações paralelas.
+Na CPU (OpenMP), os resultados são bit a bit idênticos à referência (`Max Abs Err = 0`). Na GPU (CUDA), observa-se um resíduo numérico desprezível na ordem de `2.41e-35` em FP32 devido ao arredondamento das instruções *Fused Multiply-Add* (FMA) do hardware.
 
 ## Scripts
 
@@ -268,24 +266,24 @@ Varre múltiplos valores de N e threads:
 # Variáveis configuráveis no script:
 SIZES=(512 1024 2048 4096 8192)    # Dimensões da matriz
 THREADS=(1 2 4 8 12 16)             # Número de threads OpenMP
-ITERATIONS=500                       # Iterações por experimento
+ITERATIONS=500                      # Iterações por experimento
 ```
 
 ### `plot_results.py`
-Gera gráficos a partir de `log_raw.txt` (requer Python com matplotlib e pandas).
+Gera gráficos a partir de `log_raw.txt` (requer Python com `matplotlib`, `seaborn`, `numpy` e `pandas`).
 
 ## Profiling e Relatórios
 
 ### Nsight Systems (nsys) — Profiling de Sistema
 
-Gera relatórios de performance do sistema completo, incluindo tempo de execução CPU/GPU, transferências host-device, e chamadas NVAPI.
+Gera relatórios de performance do sistema completo, incluindo tempo de execução CPU/GPU, transferências host-device e chamadas de CUDA API.
 
 ```bash
 # Perfil básico (CUDA + NVTX)
 nsys profile --trace=cuda,nvtx --force-overwrite true --stats=true \
     -o profile_system_jacobi ./build/bin/jacobi_benchmark 4096 500
 
-# Com sudo (se necessário para acesso à GPU)
+# Com sudo (se necessário para acesso aos contadores da GPU)
 sudo env "PATH=$PATH" nsys profile --trace=cuda,nvtx --force-overwrite true --stats=true \
     -o profile_system_jacobi ./build/bin/jacobi_benchmark 4096 500
 
@@ -296,38 +294,35 @@ sudo nsys profile --trace=cuda,nvtx,osrt --stats=true \
 
 **Análise do relatório:**
 ```bash
-# Converter para formato legível . Tente abrir pela interface do windows se tiver msi instalado
-nsys stats -o report_profile -s none profile_system_jacobi.nsys-rep
-
-# Gerar relatório em texto
-nsys report --report=timeline profile_system_jacobi.nsys-rep
+# Exibir estatísticas no terminal (ou abrir .nsys-rep pela interface gráfica)
+nsys stats profile_system_jacobi.nsys-rep
 ```
 
 ### Nsight Compute (ncu) — Profiling de Kernels
 
-Gera relatórios detalhados por kernel CUDA: occupancy, memory bandwidth, instructions per cycle, etc.
+Gera relatórios detalhados por kernel CUDA: occupancy, memory bandwidth, bank conflicts, roofine, etc.
 
 ```bash
 # Perfil completo do kernel com fonte importada
 sudo ncu --set full --import-source yes -o profile_kernels_jacobi \
     ./build/bin/jacobi_benchmark 4096 10
 
-# Análise do relatório
-ncu-report --summary profile_kernels_jacobi.ncu-rep
+# Importar e visualizar resumo do relatório no terminal
+ncu --import profile_kernels_jacobi.ncu-rep
 ```
 
 ### Comparação de Flags de Compilação
 
-As flags de compilação impactam significativamente a performance. Para encontrar a flag ideal para sua GPU:
+As flags de compilação impactam significativamente a performance. Para comparar diferentes arquiteturas CUDA:
 
 ```bash
 # Testar diferentes architectures
-nvcc -O3 -arch=sm_80 -Iinclude src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cpp src/jacobi_seq.cpp src/validation.cpp -o jacobi_benchmark_sm80 -Xcompiler "-fopenmp -O3 -march=native"
-nvcc -O3 -arch=sm_86 -Iinclude src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cpp src/jacobi_seq.cpp src/validation.cpp -o jacobi_benchmark_sm86 -Xcompiler "-fopenmp -O3 -march=native"
+nvcc -O3 -arch=sm_80 -Iinclude src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cpp src/jacobi_seq.cpp src/validation.cpp -o jacobi_benchmark_sm80 -Xcompiler "-fopenmp -O2"
+nvcc -O3 -arch=sm_86 -Iinclude src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cpp src/jacobi_seq.cpp src/validation.cpp -o jacobi_benchmark_sm86 -Xcompiler "-fopenmp -O2"
 
 # Comparar resultados
-./jacobi_benchmark_sm80 4096 1000
-./jacobi_benchmark_sm86 4096 1000
+./jacobi_benchmark_sm80 4096 500
+./jacobi_benchmark_sm86 4096 500
 ```
 
 ## Notas de Performance
@@ -335,5 +330,5 @@ nvcc -O3 -arch=sm_86 -Iinclude src/main.cpp src/jacobi_cuda.cu src/jacobi_omp.cp
 - Use `nvidia-smi` para monitorar uso de GPU durante execução
 - Use `ncu` (NVIDIA Nsight Compute) para profiling detalhado do kernel CUDA
 - Use `nsys` (NVIDIA Nsight Systems) para profiling do sistema completo
-- A versão com melhor speedup depende do hardware (número de cores CPU, arquitetura GPU)
-- As flags `-O3 -march=native` (CPU) e `-O3 --use_fast_math` (GPU) fizeram grande diferença nos resultados
+- A versão com melhor speedup depende do hardware (número de núcleos físicos da CPU, largura de banda de memória e arquitetura da GPU)
+- As flags `-O3` (CUDA) e `-O2` (host C++) mantêm a otimização de desempenho preservando a precisão numérica IEEE-754 FP32
