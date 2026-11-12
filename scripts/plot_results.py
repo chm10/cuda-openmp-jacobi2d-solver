@@ -14,83 +14,80 @@ def load_benchmark_data(log_filepath='log_raw.txt'):
     with open(log_filepath, 'r') as f:
         text = f.read()
 
-    blocks = text.split('========================================================================================')
+    sections = re.split(r'-{40,}\n# Experiment:\s*', text)
     records = []
-    current_N = None
 
-    for block in blocks:
-        n_match = re.search(r'Jacobi 2D Benchmark \(N=(\d+)', block)
-        if n_match:
-            current_N = int(n_match.group(1))
+    for sec in sections[1:]:
+        header_line = sec.split('\n')[0]
+        exp_match = re.match(
+            r'(\w+)\s*\|\s*(?:Repeat:\s*(\d+)\s*\|\s*)?Threads:\s*(\d+)\s*\|\s*N:\s*(\d+)',
+            header_line
+        )
+        if not exp_match:
             continue
-        
-        lines = block.strip().split('\n')
-        for line in lines:
-            if not line.strip(): 
-                continue
-            m = re.match(r'\[(.*?)\]\s+Time:\s+([\d\.]+)\s*ms(?: \| Speedup:\s+([\d\.]+)x)?', line)
-            if m and current_N:
-                impl = m.group(1).strip()
-                time_ms = float(m.group(2))
-                records.append({'N': current_N, 'Implementation': impl, 'Time_ms': time_ms})
 
-    df = pd.DataFrame(records)
-    
-    # Calcular média das execuções por tamanho de N e Implementação
-    df_avg = df.groupby(['N', 'Implementation'])['Time_ms'].mean().reset_index()
+        exp_type = exp_match.group(1)
+        repeat = int(exp_match.group(2)) if exp_match.group(2) else 1
+        threads = int(exp_match.group(3))
+        N = int(exp_match.group(4))
+
+        for line in sec.split('\n'):
+            m = re.match(
+                r'\[(.*?)\]\s+Time:\s+([\d\.]+)\s*ms(?:\s*\|\s*Speedup:\s+([\d\.]+)x)?',
+                line.strip()
+            )
+            if m:
+                # Normaliza espaços internos (ex.: "CUDA Naive  8x 8" -> "CUDA Naive 8x 8")
+                impl = re.sub(r'\s+', ' ', m.group(1).strip())
+                time_ms = float(m.group(2))
+                records.append({
+                    'Experiment': exp_type,
+                    'Repeat': repeat,
+                    'Threads': threads,
+                    'N': N,
+                    'Implementation': impl,
+                    'Time_ms': time_ms
+                })
+
+    df_all = pd.DataFrame(records)
+
+    # Considera apenas a bateria size_scaling (Threads=8, 5 repetições) para os gráficos por N
+    df_size = df_all[df_all['Experiment'] == 'size_scaling']
+    df_avg = df_size.groupby(['N', 'Implementation'], sort=False)['Time_ms'].mean().reset_index()
 
     # Calcular Speedup relativo à média da versão Sequencial
     seq_times = df_avg[df_avg['Implementation'] == 'CPU Seq'].set_index('N')['Time_ms'].to_dict()
     df_avg['Speedup'] = df_avg.apply(lambda r: seq_times[r['N']] / r['Time_ms'], axis=1)
 
-    return df_avg, seq_times
+    return df_avg, seq_times, df_all
 
 
 # -----------------------------------------------------------------------------
-# 2. Função para Extrair Speedup OpenMP por Thread (usa marcadores de log_raw.txt)
+# 2. Função para Extrair Speedup OpenMP por Thread (bateria thread_scaling)
 # -----------------------------------------------------------------------------
-def load_omp_speedup_by_thread(log_filepath='log_raw.txt'):
-    """Extrai speedup do OpenMP Basic e Tiled agrupado por número de threads."""
-    with open(log_filepath, 'r') as f:
-        text = f.read()
+def load_omp_speedup_by_thread(df_all):
+    """Extrai speedup médio do OpenMP Basic e Tiled agrupado por número de threads."""
+    df_th = df_all[df_all['Experiment'] == 'thread_scaling']
+    if df_th.empty:
+        return [], {}
 
-    # Encontrar todos os blocos marcados com "# Threads: N | ..."
-    thread_blocks = re.split(r'(?=# Threads:)', text)
-    
-    omp_data = {'threads': [], 'OpenMP Basic': [], 'OpenMP Tiled': []}
-    
-    for block in thread_blocks:
-        threads_match = re.search(r'# Threads:\s*(\d+)', block)
-        if not threads_match:
-            continue
-        threads = int(threads_match.group(1))
-        
-        basic_match = re.search(r'\[OpenMP Basic\]\s+Time:\s*[\d.]+\s+ms\s*\|\s*Speedup:\s*([\d.]+)', block)
-        tiled_match = re.search(r'\[OpenMP Tiled\]\s+Time:\s*[\d.]+\s+ms\s*\|\s*Speedup:\s*([\d.]+)', block)
-        
-        if basic_match:
-            omp_data['threads'].append(threads)
-            omp_data['OpenMP Basic'].append(float(basic_match.group(1)))
-        if tiled_match:
-            omp_data['OpenMP Tiled'].append(float(tiled_match.group(1)))
+    df_th_avg = df_th.groupby(['Threads', 'Implementation'], sort=False)['Time_ms'].mean().unstack()
+    threads = sorted(df_th_avg.index.tolist())
 
-    # Remover duplicatas mantendo ordem (pode haver múltiplos N com mesma thread count)
-    seen = set()
-    unique_threads = []
-    for t in omp_data['threads']:
-        if t not in seen:
-            seen.add(t)
-            unique_threads.append(t)
-
-    return unique_threads, omp_data
+    omp_data = {
+        'threads': threads,
+        'OpenMP Basic': (df_th_avg.loc[threads, 'CPU Seq'] / df_th_avg.loc[threads, 'OpenMP Basic']).tolist(),
+        'OpenMP Tiled': (df_th_avg.loc[threads, 'CPU Seq'] / df_th_avg.loc[threads, 'OpenMP Tiled']).tolist(),
+    }
+    return threads, omp_data
 
 
 # Carregar dados tratados
-df_avg, seq_times, raw_records = load_benchmark_data('log_raw.txt')
+df_avg, seq_times, df_all = load_benchmark_data('log_raw.txt')
 Ns = sorted(df_avg['N'].unique())
 
-# Carregar speedup OpenMP por thread (se disponível no log)
-omp_threads, omp_speedup_data = load_omp_speedup_by_thread('log_raw.txt')
+# Carregar speedup OpenMP por thread
+omp_threads, omp_speedup_data = load_omp_speedup_by_thread(df_all)
 
 # -----------------------------------------------------------------------------
 # GRÁFICO 1: Tempo de Execução vs. Tamanho do Problema N (Escala Logarítmica)
@@ -101,7 +98,7 @@ markers = ['o', 's', '^', 'D', 'v']
 
 for impl, marker in zip(key_impls, markers):
     sub = df_avg[df_avg['Implementation'] == impl]
-    plt.plot(sub['N'], sub['Time_ms'], marker=marker, linewidth=2, label=impl)
+    plt.plot(sub['N'], sub['Time_ms'], marker=marker, linewidth=2, label=impl.replace('32x 8', '32x8'))
 
 plt.xscale('log', base=2)
 plt.yscale('log')
@@ -123,7 +120,7 @@ eval_markers = ['s', '^', 'D', 'v']
 
 for impl, marker in zip(eval_impls, eval_markers):
     sub = df_avg[df_avg['Implementation'] == impl]
-    plt.plot(sub['N'], sub['Speedup'], marker=marker, linewidth=2, label=impl)
+    plt.plot(sub['N'], sub['Speedup'], marker=marker, linewidth=2, label=impl.replace('32x 8', '32x8'))
 
 plt.axhline(1.0, color='gray', linestyle='--', label='Baseline CPU Seq (1x)')
 plt.xticks(Ns, labels=[str(n) for n in Ns])
@@ -140,7 +137,13 @@ plt.close()
 # -----------------------------------------------------------------------------
 plt.figure(figsize=(9, 5))
 cuda_sub = df_avg[(df_avg['N'] == 8192) & (df_avg['Implementation'].str.contains('CUDA'))].copy()
-cuda_sub['Label'] = cuda_sub['Implementation'].str.replace('CUDA Naive ', '').str.replace('CUDA Shared ', 'Shared ')
+cuda_sub['Label'] = (
+    cuda_sub['Implementation']
+    .str.replace('CUDA Naive ', '', regex=False)
+    .str.replace('CUDA Shared ', 'Shared ', regex=False)
+    .str.replace(' ', '', regex=False)
+    .str.replace('Shared', 'Shared ', regex=False)
+)
 
 bars = plt.bar(cuda_sub['Label'], cuda_sub['Time_ms'], color=sns.color_palette("Blues_r", len(cuda_sub)))
 plt.title('Comparativo de Geometrias de Bloco e Kernel CUDA (N = 8192)', fontsize=12, fontweight='bold')
@@ -149,8 +152,9 @@ plt.ylabel('Tempo de Execução (ms)', fontsize=10)
 
 for bar in bars:
     yval = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width()/2.0, yval + 5, f'{yval:.1f} ms', ha='center', va='bottom', fontsize=9)
+    plt.text(bar.get_x() + bar.get_width() / 2.0, yval + 5, f'{yval:.1f} ms', ha='center', va='bottom', fontsize=9)
 
+plt.ylim(0, max(cuda_sub['Time_ms']) * 1.12)
 plt.tight_layout()
 plt.savefig('3_cuda_block_geometries.png', dpi=300)
 plt.close()
@@ -159,18 +163,26 @@ plt.close()
 # GRÁFICO 4: Comparação Direta de Desempenho para N = 4096
 # -----------------------------------------------------------------------------
 plt.figure(figsize=(10, 5.5))
-n4096_sub = df_avg[df_avg['N'] == 4096].sort_values(by='Time_ms', ascending=False)
+n4096_sub = df_avg[df_avg['N'] == 4096].sort_values(by='Time_ms', ascending=False).copy()
+n4096_sub['CleanImpl'] = n4096_sub['Implementation'].str.replace('x ', 'x', regex=False)
 
-bars = plt.barh(n4096_sub['Implementation'], n4096_sub['Time_ms'], color=sns.color_palette("viridis", len(n4096_sub)))
+bars = plt.barh(n4096_sub['CleanImpl'], n4096_sub['Time_ms'], color=sns.color_palette("viridis", len(n4096_sub)))
 plt.title('Comparação Direta de Tempo de Execução para N = 4096', fontsize=12, fontweight='bold')
 plt.xlabel('Tempo de Execução em ms (Menor é melhor)', fontsize=10)
 plt.ylabel('Versão / Otimização', fontsize=10)
 
 for bar in bars:
     xval = bar.get_width()
-    plt.text(xval + 20, bar.get_y() + bar.get_height()/2.0, f'{xval:.1f} ms ({seq_times[4096]/xval:.1f}x)', ha='left', va='center', fontsize=9)
+    plt.text(
+        xval + 20,
+        bar.get_y() + bar.get_height() / 2.0,
+        f'{xval:.1f} ms ({seq_times[4096] / xval:.1f}x)',
+        ha='left',
+        va='center',
+        fontsize=9
+    )
 
-plt.xlim(0, max(n4096_sub['Time_ms']) * 1.22)
+plt.xlim(0, max(n4096_sub['Time_ms']) * 1.24)
 plt.tight_layout()
 plt.savefig('4_comparativo_algoritmos_N4096.png', dpi=300)
 plt.close()
@@ -187,17 +199,22 @@ if omp_threads and 'OpenMP Basic' in omp_speedup_data:
     plt.plot(threads, speedup_omp_basic, marker='o', label='OpenMP Basic', linewidth=2)
     if speedup_omp_tiled:
         plt.plot(threads, speedup_omp_tiled, marker='s', label='OpenMP Tiled', linewidth=2)
-    plt.plot(threads, threads, '--', color='gray', label='Speedup Ideal (Linear)')
+    plt.axhline(1.0, color='gray', linestyle='--', label='Baseline CPU Seq (1.0x)')
 
+    for t, sb, st in zip(threads, speedup_omp_basic, speedup_omp_tiled):
+        plt.annotate(f'{sb:.2f}x', (t, sb), textcoords="offset points", xytext=(0, 8), ha='center', fontsize=8.5)
+        plt.annotate(f'{st:.2f}x', (t, st), textcoords="offset points", xytext=(0, -14), ha='center', fontsize=8.5)
+
+    plt.ylim(0.3, 1.45)
     plt.title('Escalabilidade OpenMP vs. Número de Threads (N=4096)', fontsize=12, fontweight='bold')
     plt.xlabel('Número de Threads', fontsize=10)
     plt.ylabel('Speedup (T_seq / T_par)', fontsize=10)
     plt.xticks(threads)
-    plt.legend()
+    plt.legend(loc='lower right', frameon=True)
     plt.tight_layout()
     plt.savefig('5_scalability_openmp.png', dpi=300)
     plt.close()
 else:
-    print("Aviso: dados de threads não encontrados em log_raw.txt. Usando valores padrão.")
+    print("Aviso: dados de threads não encontrados em log_raw.txt.")
 
 print("Todos os 5 gráficos foram gerados e salvos com sucesso!")
