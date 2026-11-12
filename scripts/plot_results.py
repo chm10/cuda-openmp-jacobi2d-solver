@@ -37,8 +37,7 @@ def load_benchmark_data(log_filepath='log_raw.txt'):
                 line.strip()
             )
             if m:
-                # Normaliza espaços internos (ex.: "CUDA Naive  8x 8" -> "CUDA Naive 8x 8")
-                impl = re.sub(r'\s+', ' ', m.group(1).strip())
+                impl = m.group(1).strip()
                 time_ms = float(m.group(2))
                 records.append({
                     'Experiment': exp_type,
@@ -51,7 +50,7 @@ def load_benchmark_data(log_filepath='log_raw.txt'):
 
     df_all = pd.DataFrame(records)
 
-    # Considera apenas a bateria size_scaling (Threads=8, 5 repetições) para os gráficos por N
+    # Filtrar apenas size_scaling (Threads=8, 5 repetições) para os gráficos por N
     df_size = df_all[df_all['Experiment'] == 'size_scaling']
     df_avg = df_size.groupby(['N', 'Implementation'], sort=False)['Time_ms'].mean().reset_index()
 
@@ -63,10 +62,10 @@ def load_benchmark_data(log_filepath='log_raw.txt'):
 
 
 # -----------------------------------------------------------------------------
-# 2. Função para Extrair Speedup OpenMP por Thread (bateria thread_scaling)
+# 2. Função para Extrair Speedup OpenMP por Thread (usa marcadores de log_raw.txt)
 # -----------------------------------------------------------------------------
 def load_omp_speedup_by_thread(df_all):
-    """Extrai speedup médio do OpenMP Basic e Tiled agrupado por número de threads."""
+    """Extrai speedup do OpenMP Basic e Tiled agrupado por número de threads."""
     df_th = df_all[df_all['Experiment'] == 'thread_scaling']
     if df_th.empty:
         return [], {}
@@ -86,7 +85,7 @@ def load_omp_speedup_by_thread(df_all):
 df_avg, seq_times, df_all = load_benchmark_data('log_raw.txt')
 Ns = sorted(df_avg['N'].unique())
 
-# Carregar speedup OpenMP por thread
+# Carregar speedup OpenMP por thread (se disponível no log)
 omp_threads, omp_speedup_data = load_omp_speedup_by_thread(df_all)
 
 # -----------------------------------------------------------------------------
@@ -98,7 +97,7 @@ markers = ['o', 's', '^', 'D', 'v']
 
 for impl, marker in zip(key_impls, markers):
     sub = df_avg[df_avg['Implementation'] == impl]
-    plt.plot(sub['N'], sub['Time_ms'], marker=marker, linewidth=2, label=impl.replace('32x 8', '32x8'))
+    plt.plot(sub['N'], sub['Time_ms'], marker=marker, linewidth=2, label=impl)
 
 plt.xscale('log', base=2)
 plt.yscale('log')
@@ -120,7 +119,7 @@ eval_markers = ['s', '^', 'D', 'v']
 
 for impl, marker in zip(eval_impls, eval_markers):
     sub = df_avg[df_avg['Implementation'] == impl]
-    plt.plot(sub['N'], sub['Speedup'], marker=marker, linewidth=2, label=impl.replace('32x 8', '32x8'))
+    plt.plot(sub['N'], sub['Speedup'], marker=marker, linewidth=2, label=impl)
 
 plt.axhline(1.0, color='gray', linestyle='--', label='Baseline CPU Seq (1x)')
 plt.xticks(Ns, labels=[str(n) for n in Ns])
@@ -137,13 +136,7 @@ plt.close()
 # -----------------------------------------------------------------------------
 plt.figure(figsize=(9, 5))
 cuda_sub = df_avg[(df_avg['N'] == 8192) & (df_avg['Implementation'].str.contains('CUDA'))].copy()
-cuda_sub['Label'] = (
-    cuda_sub['Implementation']
-    .str.replace('CUDA Naive ', '', regex=False)
-    .str.replace('CUDA Shared ', 'Shared ', regex=False)
-    .str.replace(' ', '', regex=False)
-    .str.replace('Shared', 'Shared ', regex=False)
-)
+cuda_sub['Label'] = cuda_sub['Implementation'].str.replace('CUDA Naive ', '').str.replace('CUDA Shared ', 'Shared ')
 
 bars = plt.bar(cuda_sub['Label'], cuda_sub['Time_ms'], color=sns.color_palette("Blues_r", len(cuda_sub)))
 plt.title('Comparativo de Geometrias de Bloco e Kernel CUDA (N = 8192)', fontsize=12, fontweight='bold')
@@ -152,9 +145,8 @@ plt.ylabel('Tempo de Execução (ms)', fontsize=10)
 
 for bar in bars:
     yval = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width() / 2.0, yval + 5, f'{yval:.1f} ms', ha='center', va='bottom', fontsize=9)
+    plt.text(bar.get_x() + bar.get_width()/2.0, yval + 5, f'{yval:.1f} ms', ha='center', va='bottom', fontsize=9)
 
-plt.ylim(0, max(cuda_sub['Time_ms']) * 1.12)
 plt.tight_layout()
 plt.savefig('3_cuda_block_geometries.png', dpi=300)
 plt.close()
@@ -163,26 +155,18 @@ plt.close()
 # GRÁFICO 4: Comparação Direta de Desempenho para N = 4096
 # -----------------------------------------------------------------------------
 plt.figure(figsize=(10, 5.5))
-n4096_sub = df_avg[df_avg['N'] == 4096].sort_values(by='Time_ms', ascending=False).copy()
-n4096_sub['CleanImpl'] = n4096_sub['Implementation'].str.replace('x ', 'x', regex=False)
+n4096_sub = df_avg[df_avg['N'] == 4096].sort_values(by='Time_ms', ascending=False)
 
-bars = plt.barh(n4096_sub['CleanImpl'], n4096_sub['Time_ms'], color=sns.color_palette("viridis", len(n4096_sub)))
+bars = plt.barh(n4096_sub['Implementation'], n4096_sub['Time_ms'], color=sns.color_palette("viridis", len(n4096_sub)))
 plt.title('Comparação Direta de Tempo de Execução para N = 4096', fontsize=12, fontweight='bold')
 plt.xlabel('Tempo de Execução em ms (Menor é melhor)', fontsize=10)
 plt.ylabel('Versão / Otimização', fontsize=10)
 
 for bar in bars:
     xval = bar.get_width()
-    plt.text(
-        xval + 20,
-        bar.get_y() + bar.get_height() / 2.0,
-        f'{xval:.1f} ms ({seq_times[4096] / xval:.1f}x)',
-        ha='left',
-        va='center',
-        fontsize=9
-    )
+    plt.text(xval + 20, bar.get_y() + bar.get_height()/2.0, f'{xval:.1f} ms ({seq_times[4096]/xval:.1f}x)', ha='left', va='center', fontsize=9)
 
-plt.xlim(0, max(n4096_sub['Time_ms']) * 1.24)
+plt.xlim(0, max(n4096_sub['Time_ms']) * 1.22)
 plt.tight_layout()
 plt.savefig('4_comparativo_algoritmos_N4096.png', dpi=300)
 plt.close()
@@ -199,18 +183,13 @@ if omp_threads and 'OpenMP Basic' in omp_speedup_data:
     plt.plot(threads, speedup_omp_basic, marker='o', label='OpenMP Basic', linewidth=2)
     if speedup_omp_tiled:
         plt.plot(threads, speedup_omp_tiled, marker='s', label='OpenMP Tiled', linewidth=2)
-    plt.axhline(1.0, color='gray', linestyle='--', label='Baseline CPU Seq (1.0x)')
+    plt.plot(threads, threads, '--', color='gray', label='Speedup Ideal (Linear)')
 
-    for t, sb, st in zip(threads, speedup_omp_basic, speedup_omp_tiled):
-        plt.annotate(f'{sb:.2f}x', (t, sb), textcoords="offset points", xytext=(0, 8), ha='center', fontsize=8.5)
-        plt.annotate(f'{st:.2f}x', (t, st), textcoords="offset points", xytext=(0, -14), ha='center', fontsize=8.5)
-
-    plt.ylim(0.3, 1.45)
     plt.title('Escalabilidade OpenMP vs. Número de Threads (N=4096)', fontsize=12, fontweight='bold')
     plt.xlabel('Número de Threads', fontsize=10)
     plt.ylabel('Speedup (T_seq / T_par)', fontsize=10)
     plt.xticks(threads)
-    plt.legend(loc='lower right', frameon=True)
+    plt.legend()
     plt.tight_layout()
     plt.savefig('5_scalability_openmp.png', dpi=300)
     plt.close()
